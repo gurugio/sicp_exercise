@@ -1,0 +1,142 @@
+;; for Guile implementation
+(define-macro (cons-stream a b)
+  `(cons ,a (delay ,b)))
+
+(define the-empty-stream '())
+(define stream-null? null?)
+
+(define (stream-ref s n)
+  (if (= n 0)
+      (stream-car s)
+      (stream-ref (stream-cdr s) (- n 1))))
+
+;; (define (stream-map proc s)
+;;   (if (stream-null? s)
+;;       the-empty-stream
+;;       (cons-stream (proc (stream-car s))
+;;                    (stream-map proc (stream-cdr s)))))
+
+(define (stream-for-each proc s)
+  (if (stream-null? s)
+      'done
+      (begin (proc (stream-car s))
+             (stream-for-each proc (stream-cdr s)))))
+
+(define (display-stream s)
+  (stream-for-each display-line s))
+
+(define (display-line x)
+  (newline)
+  (display x))
+
+(define (stream-car stream) (car stream))
+(define (stream-cdr stream) (force (cdr stream)))
+
+(define (stream-enumerate-interval low high)
+  (if (> low high)
+      the-empty-stream
+      (cons-stream
+       low
+       (stream-enumerate-interval (+ low 1) high))))
+
+
+;; user native force of Guile
+;; (define (force delayed-object)
+;;   (delayed-object))
+
+(define (memo-proc proc)
+  (let ((already-run? false) (result false))
+    (lambda ()
+      (if (not already-run?)
+          (begin (set! result (proc))
+                 (set! already-run? true)
+                 result)
+          result))))
+
+(define (stream-map proc . argstreams)
+  (if (stream-null? (stream-car argstreams))
+      the-empty-stream
+      (cons-stream
+        (apply proc (map stream-car argstreams))
+        (apply stream-map
+               (cons proc (map stream-cdr argstreams))))))
+
+(define (stream-filter pred stream)
+  (cond ((stream-null? stream) the-empty-stream)
+        ((pred (stream-car stream))
+         (cons-stream (stream-car stream)
+                      (stream-filter pred
+                                     (stream-cdr stream))))
+        (else (stream-filter pred (stream-cdr stream)))))
+
+
+(define (scale-stream stream factor)
+  (stream-map (lambda (x) (* x factor)) stream))
+
+(define (add-streams s1 s2)
+  (stream-map + s1 s2))
+
+(define (mul-streams s1 s2)
+  (stream-map * s1 s2))
+
+
+(define (display-stream strm count)
+  (define (body strm n)
+    (if (< n 0) 'done
+        (begin (display (stream-car strm)) (newline)
+               (body (stream-cdr strm) (- n 1)))))
+  (body strm count))
+
+
+
+
+(define (interleave s1 s2)
+  (if (stream-null? s1)
+      s2
+      (cons-stream (stream-car s1)
+                   (interleave s2 (stream-cdr s1)))))
+
+(define ones (cons-stream 1 ones))
+(define integers (cons-stream 1 (add-streams ones integers)))
+
+
+
+(define (sign-change-detector cur-val last-val)
+  (cond ((and (< last-val 0) (>= cur-val 0)) 1)
+        ((and (>= last-val 0) (< cur-val 0)) -1)
+        (else 0)))
+
+(define zero-crossings
+  (stream-map sign-change-detector sense-data (cons-stream 0 sense-data)))
+
+(define sense-data
+  (cons-stream 1 (cons-stream 2 (cons-stream 1.5 (cons-stream 1 (cons-stream 0.5 (cons-stream -0.1 (cons-stream -2 (cons-stream -3 (cons-stream -2 (cons-stream -0.5 (cons-stream 0.2 (cons-stream 3 (cons-stream 4 sense-data))))))))))))))
+
+(display-stream sense-data 10)
+(display-stream zero-crossings 10)
+
+
+(define (make-zero-crossings-old input-stream last-value last-avpt)
+  (let ((avpt (/ (+ (stream-car input-stream) last-value) 2)))
+    (cons-stream (sign-change-detector avpt last-avpt)
+                 (make-zero-crossings-old (stream-cdr input-stream)
+                                      (stream-car input-stream)
+                                      avpt))))
+
+(display-stream (make-zero-crossings-old sense-data 0 0) 13)
+
+
+;; 3.76
+
+(define (smooth strm)
+  (let ((v1 (stream-car strm))
+        (v2 (stream-car (stream-cdr strm))))
+    (cons-stream (/ (+ v1 v2) 2)
+                 (smooth (stream-cdr strm)))))
+
+(display-stream (smooth sense-data) 10)
+
+(define (make-zero-crossings smooth-proc input-stream)
+  (stream-map sign-change-detector (smooth-proc sense-data) (cons-stream 0 (smooth-proc sense-data))))
+
+(display-stream (make-zero-crossings smooth sense-data) 13)
